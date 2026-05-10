@@ -1,0 +1,84 @@
+{
+  "name": "kernal",
+  "displayName": "Kernal — Cross-Functional AI Agent",
+  "description": "A team-shared AI orchestration layer that works alongside Claude Code, Codex, Copilot, or Claude.ai free tier. Brings shared context, routing, and workflows to mixed-tool teams.",
+  "version": "0.1.0",
+  "publisher": "your-team",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["AI", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "kernal.openPanel",         "title": "Kernal: Open Panel",                       "icon": "$(rocket)" },
+      { "command": "kernal.runWorkflow",       "title": "Kernal: Run Workflow…" },
+      { "command": "kernal.detectTools",       "title": "Kernal: Detect Available AI Tools" },
+      { "command": "kernal.syncContext",       "title": "Kernal: Sync Team Context" },
+      { "command": "kernal.sendToActiveTool",  "title": "Kernal: Send Selection to Active AI Tool" },
+      { "command": "kernal.standup",           "title": "Kernal: Generate My Standup" },
+      { "command": "kernal.reviewPR",          "title": "Kernal: Review Current Branch as PR" },
+      { "command": "kernal.showSkill",         "title": "Kernal: Show Project SKILL.md" },
+      { "command": "kernal.chat",              "title": "Kernal: Open Chat",                    "icon": "$(comment-discussion)" }
+    ],
+    "viewsContainers": {
+      "activitybar": [{ "id": "kernal", "title": "Kernal", "icon": "$(symbol-misc)" }]
+    },
+    "views": {
+      "kernal": [
+        { "id": "kernal.tools",     "name": "AI Tools Detected" },
+        { "id": "kernal.workflows", "name": "Workflows" },
+        { "id": "kernal.activity",  "name": "Team Activity" }
+      ]
+    },
+    "configuration": {
+      "title": "Kernal",
+      "properties": {
+        "kernal.preferredTool": {
+          "type": "string",
+          "enum": ["auto", "claude-code", "codex", "copilot", "claude-web"],
+          "default": "auto",
+          "description": "Which AI tool Kernal should route tasks to. 'auto' picks the best available."
+        },
+        "kernal.teamContextPath": {
+          "type": "string",
+          "default": ".kernal",
+          "description": "Path (relative to workspace root) where team context files live."
+        },
+        "kernal.activityLogShared": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, activity log is committed to git so the team can see it."
+        },
+        "kernal.userRole": {
+          "type": "string",
+          "enum": ["engineer", "pm", "designer", "qa", "other"],
+          "default": "engineer",
+          "description": "Your role on the team. Influences which workflows are highlighted."
+        },
+        "kernal.previewBeforeSend": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, show the fully assembled prompt in a preview tab and ask for confirmation before sending to any AI tool."
+        }
+      }
+    },
+    "menus": {
+      "editor/context": [
+        { "command": "kernal.sendToActiveTool", "when": "editorHasSelection", "group": "kernal" }
+      ],
+      "view/title": [
+        { "command": "kernal.chat", "when": "view == kernal.workflows", "group": "navigation" }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}
