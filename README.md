@@ -1,4 +1,4 @@
-# Kernal — Cross-Functional AI Agent for VS Code
+<img src="logos/kernel-wordmark-2400.png" alt="Kernal" width="480">
 
 > One shared AI layer for your entire team — engineers, PMs, designers, and QA — regardless of which AI tool each person uses.
 
