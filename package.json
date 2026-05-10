@@ -3,12 +3,12 @@
   "displayName": "Kernal — Cross-Functional AI Agent",
   "description": "A team-shared AI orchestration layer that works alongside Claude Code, Codex, Copilot, or Claude.ai free tier. Brings shared context, routing, and workflows to mixed-tool teams.",
   "version": "0.1.0",
-  "publisher": "tusharvinayak",
+  "publisher": "notyouroniichan",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tusharvinayak/kernal.git"
+    "url": "https://github.com/notyouroniichan/kernal.git"
   },
-  "homepage": "https://github.com/tusharvinayak/kernal#readme",
+  "homepage": "https://github.com/notyouroniichan/kernal#readme",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["AI", "Other"],
   "activationEvents": ["onStartupFinished"],
