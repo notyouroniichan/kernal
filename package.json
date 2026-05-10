@@ -4,12 +4,22 @@
   "description": "A team-shared AI orchestration layer that works alongside Claude Code, Codex, Copilot, or Claude.ai free tier. Brings shared context, routing, and workflows to mixed-tool teams.",
   "version": "0.1.0",
   "publisher": "notyouroniichan",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/notyouroniichan/kernal.git"
   },
   "homepage": "https://github.com/notyouroniichan/kernal#readme",
-  "engines": { "vscode": "^1.85.0" },
+  "bugs": {
+    "url": "https://github.com/notyouroniichan/kernal/issues"
+  },
+  "qna": "https://github.com/notyouroniichan/kernal/discussions",
+  "keywords": ["ai", "claude", "copilot", "codex", "team", "workflow", "context", "standup", "review", "agent"],
+  "galleryBanner": {
+    "color": "#0d0d0d",
+    "theme": "dark"
+  },
+  "engines": { "vscode": "^1.85.0", "node": ">=18.0.0" },
   "categories": ["AI", "Other"],
   "activationEvents": ["onStartupFinished"],
   "icon": "logos/kernel-logo-512.png",

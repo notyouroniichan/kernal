@@ -113,7 +113,7 @@ export class TeamContext {
       'README.md': [
         '# .kernal/',
         '',
-        'This folder contains Loom\'s team context files. **Commit it to git** so the whole team benefits.',
+        'This folder contains Kernal\'s team context files. **Commit it to git** so the whole team benefits.',
         '',
         '## Files',
         '',
@@ -267,19 +267,23 @@ export class TeamContext {
     }
   }
 
+  private writeQueue: Promise<void> = Promise.resolve();
+
   async appendActivity(entry: ActivityEntry): Promise<void> {
+    this.writeQueue = this.writeQueue.then(() => this.doAppendActivity(entry));
+    await this.writeQueue;
+  }
+
+  private async doAppendActivity(entry: ActivityEntry): Promise<void> {
     const uri = vscode.Uri.joinPath(this.kernalDir, 'activity.jsonl');
-    let existing = '';
+    let lines: string[] = [];
     try {
       const bytes = await vscode.workspace.fs.readFile(uri);
-      existing = Buffer.from(bytes).toString('utf8');
+      lines = Buffer.from(bytes).toString('utf8').split('\n').filter(l => l.trim());
     } catch { /* file may not exist yet */ }
-
-    const line = JSON.stringify(entry);
-    const newContent = existing
-      ? existing.trimEnd() + '\n' + line + '\n'
-      : line + '\n';
-    await vscode.workspace.fs.writeFile(uri, Buffer.from(newContent, 'utf8'));
+    lines.push(JSON.stringify(entry));
+    if (lines.length > 1000) lines = lines.slice(-1000);
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(lines.join('\n') + '\n', 'utf8'));
   }
 
   async readActivity(limit = 50): Promise<ActivityEntry[]> {

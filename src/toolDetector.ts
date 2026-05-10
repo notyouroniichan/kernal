@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { execSync } from 'child_process';
+import { execFile } from 'child_process';
 
 export interface DetectedTool {
   id: 'claude-code' | 'codex' | 'copilot' | 'claude-web';
@@ -9,20 +9,27 @@ export interface DetectedTool {
   detail: string;
 }
 
-function checkCliTool(command: string): boolean {
-  try {
-    execSync(`${command} --version`, { timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
-    return true;
-  } catch {
-    return false;
-  }
+// Async check — runs the CLI in a child process so the extension host thread never blocks.
+function checkCliTool(command: string): Promise<boolean> {
+  return new Promise(resolve => {
+    const proc = execFile(command, ['--version'], { timeout: 3000 }, (err) => {
+      resolve(!err);
+    });
+    proc.on('error', () => resolve(false));
+  });
 }
 
 export async function detectTools(): Promise<DetectedTool[]> {
+  // Run both CLI checks in parallel — total wait is max(claude, codex), not their sum.
+  const [claudeAvailable, codexAvailable] = await Promise.all([
+    checkCliTool('claude'),
+    checkCliTool('codex'),
+  ]);
+
   const claudeCode: DetectedTool = {
     id: 'claude-code',
     name: 'Claude Code',
-    available: checkCliTool('claude'),
+    available: claudeAvailable,
     invokeMethod: 'cli',
     detail: 'Claude Code CLI — invoked via `claude -p <prompt>`',
   };
@@ -30,7 +37,7 @@ export async function detectTools(): Promise<DetectedTool[]> {
   const codex: DetectedTool = {
     id: 'codex',
     name: 'Codex CLI',
-    available: checkCliTool('codex'),
+    available: codexAvailable,
     invokeMethod: 'cli',
     detail: 'OpenAI Codex CLI — invoked via `codex exec <prompt>`',
   };
@@ -56,7 +63,7 @@ export async function detectTools(): Promise<DetectedTool[]> {
     name: 'Claude.ai (web)',
     available: true,
     invokeMethod: 'manual',
-    detail: 'Loom will copy a prompt to your clipboard for pasting into claude.ai',
+    detail: 'Kernal will copy a prompt to your clipboard for pasting into claude.ai',
   };
 
   return [claudeCode, codex, copilot, claudeWeb];

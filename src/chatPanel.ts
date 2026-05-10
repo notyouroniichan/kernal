@@ -73,16 +73,16 @@ export class ChatPanel {
     const preferred = vscode.workspace.getConfiguration('kernal').get<string>('preferredTool', 'auto');
     const tool = routeTask(this.getTools(), 'chat', preferred);
     if (!tool) {
-      await this.panel.webview.postMessage({ type: 'error', text: 'No AI tools available. Run "Loom: Detect Available AI Tools" first.' });
+      await this.panel.webview.postMessage({ type: 'error', text: 'No AI tools available. Run "Kernal: Detect Available AI Tools" first.' });
       return;
     }
 
     const userMessage = msg.text;
     this.history.push({ role: 'user', content: userMessage });
 
-    // Build conversation payload including prior turns so the AI has context.
+    // Build conversation payload — cap at last 20 turns to keep prompts manageable.
     const historyText = this.history
-      .slice(0, -1)  // exclude the just-added user message
+      .slice(-21, -1)  // up to 20 prior turns, exclude just-added user message
       .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
       .join('\n\n');
     const taskPrompt = 'You are a helpful AI teammate for this project. Continue the conversation below, following the PROJECT SKILL and context above.';
@@ -348,6 +348,15 @@ export class ChatPanel {
 
     // detect OS for hint
     if (!navigator.platform.includes('Mac')) hintEl.textContent = 'Ctrl+Enter to send';
+
+    window.onerror = (_msg, _src, _line, _col, err) => {
+      setLoading(false);
+      addMsg('error', 'Panel error: ' + (err ? err.message : 'unknown'));
+    };
+    window.addEventListener('unhandledrejection', e => {
+      setLoading(false);
+      addMsg('error', 'Panel error: ' + (e.reason?.message ?? String(e.reason)));
+    });
   </script>
 </body>
 </html>`;

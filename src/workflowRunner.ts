@@ -10,8 +10,11 @@ export interface WorkflowResult {
   error?: string;
 }
 
+const CLI_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
 export class WorkflowRunner {
-  private context: TeamContext;
+  private readonly context: TeamContext;
+  private cachedUsername: string | undefined;
 
   constructor(context: TeamContext) {
     this.context = context;
@@ -84,12 +87,38 @@ export class WorkflowRunner {
     return lines.join('\n');
   }
 
-  private runClaudeCode(fullPrompt: string, onChunk?: (chunk: string) => void): Promise<WorkflowResult> {
+  // Spawns a CLI tool, pipes the prompt via stdin to avoid OS argument-length limits,
+  // and enforces a 5-minute hard timeout.
+  private spawnCli(
+    command: string,
+    args: string[],
+    fullPrompt: string,
+    onChunk?: (chunk: string) => void,
+    outputTitle?: string
+  ): Promise<WorkflowResult> {
     return new Promise(resolve => {
       const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-      const proc = spawn('claude', ['-p', fullPrompt], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+      const proc = spawn(command, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+
+      // Pipe prompt via stdin — avoids OS ARG_MAX limits on large diffs/files.
+      proc.stdin?.write(fullPrompt, 'utf8');
+      proc.stdin?.end();
+
       let stdout = '';
       let stderr = '';
+      let settled = false;
+
+      const finish = (result: WorkflowResult): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+
+      const timer = setTimeout(() => {
+        proc.kill();
+        finish({ ok: false, error: `${command} timed out after 5 minutes.` });
+      }, CLI_TIMEOUT_MS);
 
       proc.stdout?.on('data', (chunk: Buffer) => {
         const text = chunk.toString();
@@ -100,47 +129,26 @@ export class WorkflowRunner {
 
       proc.on('close', (code: number | null) => {
         if (code === 0) {
-          // Only open an editor tab when not streaming to a panel
-          if (!onChunk) this.showOutput(stdout, 'Claude Code Output');
-          resolve({ ok: true, output: stdout });
+          // Open a tab only for workflow runs, not when streaming to the chat panel.
+          if (!onChunk && outputTitle) this.showOutput(stdout);
+          finish({ ok: true, output: stdout });
         } else {
-          resolve({ ok: false, error: stderr || `claude exited with code ${code}` });
+          finish({ ok: false, error: stderr || `${command} exited with code ${code}` });
         }
       });
 
       proc.on('error', (err: Error) => {
-        resolve({ ok: false, error: err.message });
+        finish({ ok: false, error: err.message });
       });
     });
   }
 
+  private runClaudeCode(fullPrompt: string, onChunk?: (chunk: string) => void): Promise<WorkflowResult> {
+    return this.spawnCli('claude', ['-p'], fullPrompt, onChunk, 'Claude Code Output');
+  }
+
   private runCodex(fullPrompt: string, onChunk?: (chunk: string) => void): Promise<WorkflowResult> {
-    return new Promise(resolve => {
-      const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-      const proc = spawn('codex', ['exec', fullPrompt], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
-      let stdout = '';
-      let stderr = '';
-
-      proc.stdout?.on('data', (chunk: Buffer) => {
-        const text = chunk.toString();
-        stdout += text;
-        onChunk?.(text);
-      });
-      proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
-
-      proc.on('close', (code: number | null) => {
-        if (code === 0) {
-          if (!onChunk) this.showOutput(stdout, 'Codex Output');
-          resolve({ ok: true, output: stdout });
-        } else {
-          resolve({ ok: false, error: stderr || `codex exited with code ${code}` });
-        }
-      });
-
-      proc.on('error', (err: Error) => {
-        resolve({ ok: false, error: err.message });
-      });
-    });
+    return this.spawnCli('codex', ['exec'], fullPrompt, onChunk, 'Codex Output');
   }
 
   private async runCopilot(fullPrompt: string): Promise<WorkflowResult> {
@@ -155,38 +163,43 @@ export class WorkflowRunner {
 
   private async runClaudeWeb(fullPrompt: string): Promise<WorkflowResult> {
     await vscode.env.clipboard.writeText(fullPrompt);
-    await vscode.env.openExternal(vscode.Uri.parse('https://claude.ai/new'));
+    const opened = await vscode.env.openExternal(vscode.Uri.parse('https://claude.ai/new'));
+    if (!opened) {
+      return { ok: true, output: 'Prompt copied to clipboard. Could not open browser — navigate to claude.ai/new manually.' };
+    }
     return { ok: true, output: 'Prompt copied to clipboard. claude.ai/new opened in browser — paste to run.' };
   }
 
-  private showOutput(content: string, title: string): void {
+  private showOutput(content: string): void {
     void vscode.workspace.openTextDocument({ content, language: 'markdown' }).then(doc => {
       void vscode.window.showTextDocument(doc, { preview: true, preserveFocus: false });
     });
-    void title; // used as intent label; VS Code doesn't support tab titles for untitled docs
   }
 
-  private async logActivity(tool: DetectedTool, workflowName: string, result: WorkflowResult): Promise<void> {
-    const config = vscode.workspace.getConfiguration('kernal');
-    const role = config.get<string>('userRole', 'engineer');
-
-    let username = 'unknown';
+  // Cache the username — git config user.name is a sync disk read we don't need to repeat.
+  private getUsername(): string {
+    if (this.cachedUsername !== undefined) return this.cachedUsername;
     try {
       const out = execSync('git config user.name', {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
       });
-      username = (typeof out === 'string' ? out : '').trim() || os.userInfo().username;
+      this.cachedUsername = (typeof out === 'string' ? out : '').trim() || os.userInfo().username;
     } catch {
-      username = os.userInfo().username;
+      this.cachedUsername = os.userInfo().username;
     }
+    return this.cachedUsername;
+  }
 
+  private async logActivity(tool: DetectedTool, workflowName: string, result: WorkflowResult): Promise<void> {
+    const config = vscode.workspace.getConfiguration('kernal');
+    const role = config.get<string>('userRole', 'engineer');
     const raw = result.ok ? (result.output ?? '') : (result.error ?? '');
     const summary = raw.slice(0, 140).replace(/\n/g, ' ');
 
     const entry: ActivityEntry = {
       timestamp: new Date().toISOString(),
-      user: username,
+      user: this.getUsername(),
       role,
       tool: tool.id,
       workflow: workflowName,

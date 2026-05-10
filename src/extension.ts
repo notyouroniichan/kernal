@@ -101,13 +101,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // 7. Initial status bar render
   await updateStatusBar();
 
-  // 8. Watch for SKILL.md create/change/delete
+  // 8. Watch for SKILL.md create/change/delete (debounced 500ms)
   const skillWatcher = vscode.workspace.createFileSystemWatcher(
     new vscode.RelativePattern(root, '**/[Ss][Kk][Ii][Ll][Ll].[Mm][Dd]')
   );
-  const onSkillChanged = async (): Promise<void> => {
-    await teamContext.refreshSkillCache();
-    await updateStatusBar();
+  let skillDebounce: ReturnType<typeof setTimeout> | undefined;
+  const onSkillChanged = (): void => {
+    if (skillDebounce) clearTimeout(skillDebounce);
+    skillDebounce = setTimeout(() => {
+      void teamContext.refreshSkillCache().then(() => updateStatusBar());
+    }, 500);
   };
   ctx.subscriptions.push(
     skillWatcher,
@@ -186,7 +189,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         fullPrompt = await runner.assemblePrompt(built.prompt, built.payload);
       }
 
-      const result = await runner.invoke(tool, built.workflow.id, fullPrompt);
+      const result = await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: `Kernal: running ${built.workflow.label}…`,
+          cancellable: false,
+        },
+        () => runner.invoke(tool, built.workflow.id, fullPrompt)
+      );
       await activityTree.refresh();
 
       if (!result.ok) {
