@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import { execSync } from 'child_process';
 
 export interface SkillFile {
@@ -177,11 +178,27 @@ export class TeamContext {
 
   private async findNearestSkill(activeFile: vscode.Uri): Promise<SkillFile | null> {
     const rootFsPath = this.workspaceRoot.fsPath;
-    let dir = path.dirname(activeFile.fsPath);
 
-    while (dir.startsWith(rootFsPath)) {
+    // Resolve symlinks on both root and active file to prevent traversal escapes.
+    let realRoot: string;
+    let realActiveDir: string;
+    try {
+      realRoot = fs.realpathSync(rootFsPath);
+      realActiveDir = path.dirname(fs.realpathSync(activeFile.fsPath));
+    } catch {
+      return null;
+    }
+
+    let dir = realActiveDir;
+    while (dir === realRoot || dir.startsWith(realRoot + path.sep)) {
       for (const name of ['SKILL.md', 'skill.md']) {
         const candidate = path.join(dir, name);
+        // Re-resolve the candidate to catch symlinks inside the tree.
+        let realCandidate: string;
+        try { realCandidate = fs.realpathSync(candidate); } catch { continue; }
+        if (realCandidate !== realRoot && !realCandidate.startsWith(realRoot + path.sep)) {
+          continue; // symlink escape — skip
+        }
         const uri = vscode.Uri.file(candidate);
         try {
           const bytes = await vscode.workspace.fs.readFile(uri);

@@ -8,6 +8,24 @@ import { ChatPanel } from './chatPanel';
 
 let detectedTools: DetectedTool[] = [];
 
+const VALID_TOOLS = new Set(['auto', 'claude-code', 'codex', 'copilot', 'claude-web']);
+const VALID_ROLES = new Set(['engineer', 'pm', 'designer', 'qa', 'other']);
+
+function validateTeamContextPath(raw: string | undefined): string {
+  if (typeof raw !== 'string' || !raw) return '.kernal';
+  // Block absolute paths, parent traversal, and non-safe characters.
+  if (raw.includes('..') || raw.startsWith('/') || /[^A-Za-z0-9._\-/]/.test(raw)) return '.kernal';
+  return raw;
+}
+
+function validatePreferredTool(raw: string | undefined): string {
+  return (typeof raw === 'string' && VALID_TOOLS.has(raw)) ? raw : 'auto';
+}
+
+function validateUserRole(raw: string | undefined): string {
+  return (typeof raw === 'string' && VALID_ROLES.has(raw)) ? raw : 'engineer';
+}
+
 const SKILL_TEMPLATE = `# Project Skill
 
 > This file is the **authoritative playbook** for this project. Kernal prepends
@@ -57,7 +75,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   // 2. Build team context and scaffold .kernal/
   const config = vscode.workspace.getConfiguration('kernal');
-  const subdirName = config.get<string>('teamContextPath', '.kernal');
+  const subdirName = validateTeamContextPath(config.get<string>('teamContextPath'));
   const teamContext = new TeamContext(root, subdirName);
   await teamContext.ensureScaffold();
 
@@ -85,7 +103,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   ctx.subscriptions.push(statusBarItem);
 
   async function updateStatusBar(): Promise<void> {
-    const preferred = vscode.workspace.getConfiguration('kernal').get<string>('preferredTool', 'auto');
+    const preferred = validatePreferredTool(vscode.workspace.getConfiguration('kernal').get<string>('preferredTool'));
     const activeTool = routeTask(detectedTools, 'chat', preferred);
     const hasSkill = await teamContext.hasRootSkill();
     const toolName = activeTool?.name ?? 'No tool found';
@@ -143,11 +161,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
 
     vscode.commands.registerCommand('kernal.runWorkflow', async (workflowId?: string) => {
-      const preferred = vscode.workspace.getConfiguration('kernal').get<string>('preferredTool', 'auto');
+      const preferred = validatePreferredTool(vscode.workspace.getConfiguration('kernal').get<string>('preferredTool'));
 
       let selectedId = workflowId;
       if (!selectedId) {
-        const role = vscode.workspace.getConfiguration('kernal').get<string>('userRole', 'engineer');
+        const role = validateUserRole(vscode.workspace.getConfiguration('kernal').get<string>('userRole'));
         const visible = WORKFLOWS.filter(w => w.forRoles.length === 0 || w.forRoles.includes(role));
         const picked = await vscode.window.showQuickPick(
           visible.map(w => ({ label: w.label, description: w.description, id: w.id })),
@@ -214,7 +232,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
       const sel = editor.selection;
       const text = editor.document.getText(sel.isEmpty ? undefined : sel);
-      const preferred = vscode.workspace.getConfiguration('kernal').get<string>('preferredTool', 'auto');
+      const preferred = validatePreferredTool(vscode.workspace.getConfiguration('kernal').get<string>('preferredTool'));
       const tool = routeTask(detectedTools, 'explain', preferred);
       if (!tool) {
         void vscode.window.showErrorMessage('Kernal: no AI tools available.');

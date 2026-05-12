@@ -63,6 +63,8 @@ export class ChatPanel {
     await this.panel.webview.postMessage({ type: 'skillUpdate', hasSkill });
   }
 
+  private static readonly MAX_MESSAGE_BYTES = 100_000;
+
   private async handleMessage(msg: WebviewMessage): Promise<void> {
     if (msg.type === 'clear') {
       this.history = [];
@@ -70,7 +72,17 @@ export class ChatPanel {
     }
     if (msg.type !== 'send' || !msg.text) return;
 
-    const preferred = vscode.workspace.getConfiguration('kernal').get<string>('preferredTool', 'auto');
+    if (msg.text.length > ChatPanel.MAX_MESSAGE_BYTES) {
+      await this.panel.webview.postMessage({
+        type: 'error',
+        text: `Message too large (${msg.text.length.toLocaleString()} chars). Keep it under ${ChatPanel.MAX_MESSAGE_BYTES.toLocaleString()} characters.`,
+      });
+      return;
+    }
+
+    const VALID_TOOLS = new Set(['auto', 'claude-code', 'codex', 'copilot', 'claude-web']);
+    const rawTool = vscode.workspace.getConfiguration('kernal').get<string>('preferredTool');
+    const preferred = (typeof rawTool === 'string' && VALID_TOOLS.has(rawTool)) ? rawTool : 'auto';
     const tool = routeTask(this.getTools(), 'chat', preferred);
     if (!tool) {
       await this.panel.webview.postMessage({ type: 'error', text: 'No AI tools available. Run "Kernal: Detect Available AI Tools" first.' });

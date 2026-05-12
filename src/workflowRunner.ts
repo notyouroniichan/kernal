@@ -156,18 +156,28 @@ export class WorkflowRunner {
       await vscode.commands.executeCommand('workbench.action.chat.open', { query: fullPrompt });
       return { ok: true, output: 'Prompt sent to GitHub Copilot Chat.' };
     } catch {
-      await vscode.env.clipboard.writeText(fullPrompt);
-      return { ok: true, output: 'Copilot Chat unavailable — prompt copied to clipboard.' };
+      return this.copyToClipboardWithWarning(fullPrompt, 'Copilot Chat unavailable — prompt copied to clipboard.');
     }
   }
 
   private async runClaudeWeb(fullPrompt: string): Promise<WorkflowResult> {
-    await vscode.env.clipboard.writeText(fullPrompt);
+    const copied = await this.copyToClipboardWithWarning(fullPrompt, 'Prompt copied to clipboard.');
+    if (!copied.ok) return copied;
     const opened = await vscode.env.openExternal(vscode.Uri.parse('https://claude.ai/new'));
     if (!opened) {
       return { ok: true, output: 'Prompt copied to clipboard. Could not open browser — navigate to claude.ai/new manually.' };
     }
     return { ok: true, output: 'Prompt copied to clipboard. claude.ai/new opened in browser — paste to run.' };
+  }
+
+  private async copyToClipboardWithWarning(prompt: string, successMessage: string): Promise<WorkflowResult> {
+    const choice = await vscode.window.showWarningMessage(
+      'The prompt includes your SKILL.md, team context, and code. Copy to clipboard?',
+      'Copy', 'Cancel'
+    );
+    if (choice !== 'Copy') return { ok: false, error: 'Cancelled.' };
+    await vscode.env.clipboard.writeText(prompt);
+    return { ok: true, output: successMessage };
   }
 
   private showOutput(content: string): void {
@@ -191,11 +201,16 @@ export class WorkflowRunner {
     return this.cachedUsername;
   }
 
+  private static readonly VALID_ROLES = new Set(['engineer', 'pm', 'designer', 'qa', 'other']);
+  private static readonly SECRET_PATTERN = /(?:api[_-]?key|token|password|secret|bearer)\s*[=:]\s*['"]?\S+/gi;
+
   private async logActivity(tool: DetectedTool, workflowName: string, result: WorkflowResult): Promise<void> {
     const config = vscode.workspace.getConfiguration('kernal');
-    const role = config.get<string>('userRole', 'engineer');
+    const rawRole = config.get<string>('userRole');
+    const role = (typeof rawRole === 'string' && WorkflowRunner.VALID_ROLES.has(rawRole)) ? rawRole : 'engineer';
     const raw = result.ok ? (result.output ?? '') : (result.error ?? '');
-    const summary = raw.slice(0, 140).replace(/\n/g, ' ');
+    const scrubbed = raw.replace(WorkflowRunner.SECRET_PATTERN, '[REDACTED]');
+    const summary = scrubbed.slice(0, 140).replace(/\n/g, ' ');
 
     const entry: ActivityEntry = {
       timestamp: new Date().toISOString(),

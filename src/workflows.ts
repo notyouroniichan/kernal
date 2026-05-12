@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { TeamContext } from './teamContext';
 
 export interface Workflow {
@@ -11,9 +11,15 @@ export interface Workflow {
   build: (ctx: TeamContext) => Promise<{ prompt: string; payload: string }>;
 }
 
-function gitExec(command: string, cwd: string): string {
+// Uses execFileSync with array args to avoid shell interpretation.
+function gitExec(args: string[], cwd: string): string {
   try {
-    const out = execSync(command, { cwd, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
+    const out = execFileSync('git', args, {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
     return typeof out === 'string' ? out : '';
   } catch {
     return '';
@@ -41,9 +47,9 @@ export const WORKFLOWS: Workflow[] = [
     async build(ctx) {
       const prompt = (await ctx.readPrompt('review.md')) ?? 'Review the following diff carefully.';
       const cwd = getWorkspaceRoot();
-      let payload = gitExec('git diff origin/main...HEAD', cwd);
+      let payload = gitExec(['diff', 'origin/main...HEAD'], cwd);
       if (!payload.trim()) {
-        payload = gitExec('git diff HEAD~1', cwd);
+        payload = gitExec(['diff', 'HEAD~1'], cwd);
       }
       if (!payload.trim()) {
         payload = '(no diff found)';
@@ -61,8 +67,8 @@ export const WORKFLOWS: Workflow[] = [
     async build(ctx) {
       const prompt = (await ctx.readPrompt('standup.md')) ?? 'Write a standup update.';
       const cwd = getWorkspaceRoot();
-      const log = gitExec('git log --oneline -10', cwd) || '(no commits found)';
-      const status = gitExec('git status --short', cwd) || '(clean working tree)';
+      const log = gitExec(['log', '--oneline', '-10'], cwd) || '(no commits found)';
+      const status = gitExec(['status', '--short'], cwd) || '(clean working tree)';
       const payload = `Recent commits:\n${log}\nWorking tree status:\n${status}`;
       return { prompt, payload };
     },
@@ -189,7 +195,7 @@ export const WORKFLOWS: Workflow[] = [
         'Ignore merge commits and version bumps. Focus on what changed for the user or team.',
       ].join('\n');
       const cwd = getWorkspaceRoot();
-      const log = gitExec('git log --oneline --no-merges -30', cwd) || '(no commits found)';
+      const log = gitExec(['log', '--oneline', '--no-merges', '-30'], cwd) || '(no commits found)';
       return { prompt, payload: log };
     },
   },
