@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { detectTools, routeTask, DetectedTool } from './toolDetector';
 import { TeamContext } from './teamContext';
 import { WorkflowRunner } from './workflowRunner';
@@ -24,6 +25,50 @@ function validatePreferredTool(raw: string | undefined): string {
 
 function validateUserRole(raw: string | undefined): string {
   return (typeof raw === 'string' && VALID_ROLES.has(raw)) ? raw : 'engineer';
+}
+
+// Extracts the largest code fence block from AI output, or returns the full text if no fences found.
+function extractCode(output: string): string {
+  const matches = [...output.matchAll(/```[^\n]*\n([\s\S]*?)```/g)];
+  if (matches.length === 0) return output.trim();
+  return matches.reduce((a, b) => (a[1].length >= b[1].length ? a : b))[1];
+}
+
+// In-memory store for kernal-edit:// virtual documents (diff view).
+const proposalStore = new Map<string, string>();
+
+async function applyCodeEditFlow(targetFile: vscode.Uri, workflowLabel: string, output: string): Promise<void> {
+  const code = extractCode(output);
+  const filename = path.basename(targetFile.fsPath);
+  const key = `proposal-${Date.now()}`;
+  proposalStore.set(key, code);
+  const proposalUri = vscode.Uri.parse(`kernal-edit:/${key}`);
+
+  try {
+    // Show original ↔ proposed diff so the user can review before applying.
+    await vscode.commands.executeCommand(
+      'vscode.diff',
+      targetFile,
+      proposalUri,
+      `Kernal: ${workflowLabel} → ${filename}`
+    );
+  } catch {
+    // Diff view failed (e.g. binary file) — fall through to plain apply prompt.
+  }
+
+  const choice = await vscode.window.showInformationMessage(
+    `Apply Kernal's suggestion to ${filename}?`,
+    { modal: false },
+    'Apply',
+    'Discard'
+  );
+
+  proposalStore.delete(key);
+
+  if (choice === 'Apply') {
+    await vscode.workspace.fs.writeFile(targetFile, Buffer.from(code, 'utf8'));
+    void vscode.window.showInformationMessage(`Kernal: applied edit to ${filename}`);
+  }
 }
 
 const SKILL_TEMPLATE = `# Project Skill
@@ -65,6 +110,14 @@ Briefly describe the product, the audience, and the current phase.
 `;
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
+  // Virtual document provider for diff view — serves kernal-edit:// URIs.
+  ctx.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider('kernal-edit', {
+      provideTextDocumentContent(uri: vscode.Uri): string {
+        return proposalStore.get(uri.path) ?? '';
+      },
+    })
+  );
   // 1. Require a workspace folder
   const rootFolder = vscode.workspace.workspaceFolders?.[0];
   if (!rootFolder) {
@@ -189,6 +242,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         return;
       }
 
+      // Capture the active file now — it may change while the workflow runs.
+      const targetFile = vscode.window.activeTextEditor?.document.uri;
+
       const previewEnabled = vscode.workspace.getConfiguration('kernal').get<boolean>('previewBeforeSend', false);
       let fullPrompt: string;
 
@@ -219,7 +275,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
       if (!result.ok) {
         void vscode.window.showErrorMessage(`Kernal: workflow failed — ${result.error}`);
-      } else if (result.output && result.output.includes('clipboard')) {
+      } else if (built.workflow.taskKind === 'code-edit' && targetFile && result.output) {
+        await applyCodeEditFlow(targetFile, built.workflow.label, result.output);
+      } else if (result.output?.includes('clipboard')) {
         void vscode.window.showInformationMessage(result.output);
       }
     }),
