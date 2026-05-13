@@ -32,6 +32,8 @@ export class TeamContext {
     this.subdir = subdir;
   }
 
+  get root(): vscode.Uri { return this.workspaceRoot; }
+
   private get kernalDir(): vscode.Uri {
     return vscode.Uri.joinPath(this.workspaceRoot, this.subdir);
   }

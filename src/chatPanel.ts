@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
-import * as path from 'path';
 import { TeamContext } from './teamContext';
 import { WorkflowRunner } from './workflowRunner';
 import { DetectedTool, routeTask } from './toolDetector';
+import { applyCodeEditFlow } from './codeApply';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -13,7 +13,7 @@ interface ChatMessage {
 type WebviewMessage =
   | { type: 'send'; text: string }
   | { type: 'clear' }
-  | { type: 'applyCode'; code: string };
+  | { type: 'applyOutput'; rawOutput: string };
 
 export class ChatPanel {
   static currentPanel: ChatPanel | undefined;
@@ -73,17 +73,8 @@ export class ChatPanel {
       return;
     }
 
-    if (msg.type === 'applyCode') {
-      const editor = vscode.window.activeTextEditor;
-      if (!editor) {
-        await this.panel.webview.postMessage({ type: 'error', text: 'No active file — open a file in the editor first.' });
-        return;
-      }
-      await vscode.workspace.fs.writeFile(editor.document.uri, Buffer.from(msg.code, 'utf8'));
-      await this.panel.webview.postMessage({
-        type: 'info',
-        text: `Applied to ${path.basename(editor.document.uri.fsPath)}`,
-      });
+    if (msg.type === 'applyOutput') {
+      await applyCodeEditFlow('Chat suggestion', msg.rawOutput, this.context.root);
       return;
     }
 
@@ -287,21 +278,15 @@ export class ChatPanel {
     let streaming = null; // current streaming bubble
     let accumulated = ''; // full text of the current streaming response
 
-    function extractCode(text) {
-      const matches = [...text.matchAll(/\`\`\`[^\n]*\n([\s\S]*?)\`\`\`/g)];
-      if (matches.length === 0) return null;
-      return matches.reduce((a, b) => a[1].length >= b[1].length ? a : b)[1];
-    }
-
-    function addApplyButton(bubble) {
-      const code = extractCode(bubble.dataset.raw ?? '');
-      if (!code) return;
+    const codeFenceRe = new RegExp('\x60\x60\x60[\\s\\S]*?\x60\x60\x60');
+    function addApplyButton(bubble, rawOutput) {
+      if (!codeFenceRe.test(rawOutput)) return; // no code fences — skip
       const btn = document.createElement('button');
       btn.className = 'btn sec apply-btn';
-      btn.textContent = 'Apply to active file';
+      btn.textContent = 'Apply code to file';
       btn.addEventListener('click', () => {
-        vscode.postMessage({ type: 'applyCode', code });
-        btn.textContent = 'Applying…';
+        vscode.postMessage({ type: 'applyOutput', rawOutput });
+        btn.textContent = 'Processing…';
         btn.disabled = true;
       });
       bubble.appendChild(btn);
@@ -369,8 +354,7 @@ export class ChatPanel {
           if (streaming) {
             streaming.classList.remove('streaming');
             streaming.removeChild(streaming.lastChild); // remove cursor
-            streaming.dataset.raw = accumulated;
-            addApplyButton(streaming);
+            addApplyButton(streaming, accumulated);
             streaming = null;
             accumulated = '';
           }

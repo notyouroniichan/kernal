@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { detectTools, routeTask, DetectedTool } from './toolDetector';
 import { TeamContext } from './teamContext';
 import { WorkflowRunner } from './workflowRunner';
 import { WORKFLOWS, runWorkflowById } from './workflows';
 import { ToolsTreeProvider, WorkflowsTreeProvider, ActivityTreeProvider } from './treeProviders';
 import { ChatPanel } from './chatPanel';
+import { registerProposalProvider, applyCodeEditFlow } from './codeApply';
 
 let detectedTools: DetectedTool[] = [];
 
@@ -14,7 +14,6 @@ const VALID_ROLES = new Set(['engineer', 'pm', 'designer', 'qa', 'other']);
 
 function validateTeamContextPath(raw: string | undefined): string {
   if (typeof raw !== 'string' || !raw) return '.kernal';
-  // Block absolute paths, parent traversal, and non-safe characters.
   if (raw.includes('..') || raw.startsWith('/') || /[^A-Za-z0-9._\-/]/.test(raw)) return '.kernal';
   return raw;
 }
@@ -25,50 +24,6 @@ function validatePreferredTool(raw: string | undefined): string {
 
 function validateUserRole(raw: string | undefined): string {
   return (typeof raw === 'string' && VALID_ROLES.has(raw)) ? raw : 'engineer';
-}
-
-// Extracts the largest code fence block from AI output, or returns the full text if no fences found.
-function extractCode(output: string): string {
-  const matches = [...output.matchAll(/```[^\n]*\n([\s\S]*?)```/g)];
-  if (matches.length === 0) return output.trim();
-  return matches.reduce((a, b) => (a[1].length >= b[1].length ? a : b))[1];
-}
-
-// In-memory store for kernal-edit:// virtual documents (diff view).
-const proposalStore = new Map<string, string>();
-
-async function applyCodeEditFlow(targetFile: vscode.Uri, workflowLabel: string, output: string): Promise<void> {
-  const code = extractCode(output);
-  const filename = path.basename(targetFile.fsPath);
-  const key = `proposal-${Date.now()}`;
-  proposalStore.set(key, code);
-  const proposalUri = vscode.Uri.parse(`kernal-edit:/${key}`);
-
-  try {
-    // Show original ↔ proposed diff so the user can review before applying.
-    await vscode.commands.executeCommand(
-      'vscode.diff',
-      targetFile,
-      proposalUri,
-      `Kernal: ${workflowLabel} → ${filename}`
-    );
-  } catch {
-    // Diff view failed (e.g. binary file) — fall through to plain apply prompt.
-  }
-
-  const choice = await vscode.window.showInformationMessage(
-    `Apply Kernal's suggestion to ${filename}?`,
-    { modal: false },
-    'Apply',
-    'Discard'
-  );
-
-  proposalStore.delete(key);
-
-  if (choice === 'Apply') {
-    await vscode.workspace.fs.writeFile(targetFile, Buffer.from(code, 'utf8'));
-    void vscode.window.showInformationMessage(`Kernal: applied edit to ${filename}`);
-  }
 }
 
 const SKILL_TEMPLATE = `# Project Skill
@@ -110,14 +65,9 @@ Briefly describe the product, the audience, and the current phase.
 `;
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
-  // Virtual document provider for diff view — serves kernal-edit:// URIs.
-  ctx.subscriptions.push(
-    vscode.workspace.registerTextDocumentContentProvider('kernal-edit', {
-      provideTextDocumentContent(uri: vscode.Uri): string {
-        return proposalStore.get(uri.path) ?? '';
-      },
-    })
-  );
+  // Virtual document provider for kernal-edit:// URIs used by diff views.
+  registerProposalProvider(ctx);
+
   // 1. Require a workspace folder
   const rootFolder = vscode.workspace.workspaceFolders?.[0];
   if (!rootFolder) {
@@ -275,8 +225,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
       if (!result.ok) {
         void vscode.window.showErrorMessage(`Kernal: workflow failed — ${result.error}`);
-      } else if (built.workflow.taskKind === 'code-edit' && targetFile && result.output) {
-        await applyCodeEditFlow(targetFile, built.workflow.label, result.output);
+      } else if (built.workflow.taskKind === 'code-edit' && result.output) {
+        await applyCodeEditFlow(built.workflow.label, result.output, root, targetFile);
       } else if (result.output?.includes('clipboard')) {
         void vscode.window.showInformationMessage(result.output);
       }
